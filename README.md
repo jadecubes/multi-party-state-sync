@@ -1,8 +1,8 @@
 # Eight Questions About Form State
 
-Each question is something a product actually asked for. Each answer is one statement and one diagram.
+Eight requirements from an admin console of twenty long forms. One statement and one diagram each.
 
-The architecture all eight land on:
+Where all eight land:
 
 ```mermaid
 flowchart LR
@@ -226,9 +226,9 @@ flowchart TB
 
 ---
 
-## The three layers
+## The four edges one hook owns
 
-Edges ① ② ③ ④ are one hook. Named, they look like this:
+⓪ is whatever calls `setState`, and ⑤ is ordinary selector subscription — neither needs synchronizing. The other four are a single hook, and in code they carry names:
 
 ```mermaid
 flowchart TB
@@ -270,7 +270,7 @@ None of these throw. Every one of them ships.
 
 ## The tool
 
-A single hook closes 1, 2, 3, 4, 7, 8 and 9. What follows is a reference implementation — the same structure and the same guards, with the types generalized.
+A single hook closes 1, 2, 3, 4, 8 and 9, and offers an opt-in flag for 7 — hold that one lightly; the last section is about how that flag went. What follows is a reference implementation: the same structure and guards, types generalized.
 
 **Two layers.** The factory runs once per store at module load; the hook it returns runs per mount.
 
@@ -362,15 +362,15 @@ export const createFormStoreSync = <TDto extends FormDto>(
 }
 ```
 
-**The two guards are the whole cycle-breaking strategy.** Value equality, not provenance — neither side remembers whose write it was; each refuses to act when there is nothing to do. One bounce, both directions.
+Both guards compare **values, not provenance**. Neither side remembers whose write it was; each simply refuses to act when there is nothing to do, which ends the cycle after one bounce in either direction.
 
-**What this hook does not solve.** Difficulty 5 needs a one-shot ref in the initializer; 6 needs a flag around programmatic resets, and ideally a branded reset type so a raw one is a compile error. Both live outside this file.
+Difficulties 5 and 6 are not here. 5 needs a one-shot ref in the initializer; 6 needs a flag around programmatic resets, and ideally a branded reset type so that passing a raw one is a compile error.
 
 ---
 
 ## What it cost
 
-Twenty forms used this. Eight persisted to `localStorage` behind `/record/:id/edit` with one shared key, and needed an opt-in flag to suppress persistence in edit mode.
+Difficulty 7, in the field. Twenty forms used this hook. Twelve persisted to `sessionStorage`, which is per-tab, so the difficulty cannot reach them. The other eight shared one `localStorage` key behind `/record/:id/edit`, and each had to pass the opt-in flag.
 
 **Five of the eight passed it. Three did not** — same route shape, same key, same factory. It compiled, because the option is optional. It passed review, because a missing argument is invisible. It worked in every single-tab test, because the bug needs two tabs on two records.
 
