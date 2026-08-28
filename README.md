@@ -226,27 +226,145 @@ flowchart TB
 
 ---
 
-## The mechanism
+## The three layers
 
-Edges ① and ② are opposite subscriptions, each opening with the same guard:
+Edges ① ② ③ ④ are one hook. Named, they look like this:
 
-```ts
-// ① form → store
-form.subscribe({ values: true }, values => {
-  if (deepEqual(values, store.getState().fields)) return
-  store.setState(prev => ({ ...prev, fields: values }))
-})
+```mermaid
+flowchart TB
+    F["<b>React Hook Form</b><br/>user input · validation · isDirty"]
+    S["<b>zustand store</b><br/><i>source of truth</i>"]
+    P["<b>localStorage</b>"]
 
-// ② store → form
-store.subscribe(state => {
-  if (deepEqual(form.getValues(), state.fields)) return
-  form.reset(state.fields, { keepDirty: true })
-})
+    F -- "syncFormToStore" --> S
+    S -- "syncStoreToForm" --> F
+    S -- "persist middleware" --> P
+    P -- "rehydrate&#40;&#41;" --> S
+
+    style S fill:#2d6a4f,color:#fff
 ```
 
-Value equality, not provenance. Neither side remembers whose write it was; each refuses to act when there is nothing to do. The cycle terminates after one bounce in both directions.
+Both vertical pairs are asymmetric in the same way: the downward edge is automatic, the upward edge has to be asked for. `syncFormToStore` fires on every keystroke; `syncStoreToForm` needs an explicit pull at mount. The middleware persists on every write; `rehydrate()` happens only when someone calls it.
 
-③ is free. ④ is the focus listener. ⑤ needs no synchronization at all, which is why it answers the most questions.
+---
+
+## Nine difficulties
+
+The diagram is four arrows. Implementing those four arrows is not four lines, because each one has a way of going wrong that produces no error.
+
+| # | Difficulty | What it looks like when it bites |
+|---|---|---|
+| 1 | Two owners of one value | Infinite loop: form writes store, store writes form, repeat |
+| 2 | `subscribe` is change-only | Empty form over a valid draft — the value was already correct, so no change ever fires |
+| 3 | `reset` is being used as transport | Unsaved-changes warning silently disarmed on every store push |
+| 4 | Storage never announces itself | Second tab stale forever; no `storage` event is observed |
+| 5 | Remote data arrives more than once | Focus revalidation replaces the store and destroys in-flight edits |
+| 6 | Programmatic writes look like user writes | A brand-new create page stamps a draft the user never typed |
+| 7 | One key, many records | Record #1's content appears in record #2's form, across tabs |
+| 8 | The store is a module singleton | Two mounted forms fight over `reset`; stale `isDirty` leaks across routes |
+| 9 | Reference equality is not value equality | Object fields with identical content trigger spurious resets |
+
+None of these throw. Every one of them ships.
+
+---
+
+## The tool
+
+A single hook closes 1, 2, 3, 4, 7, 8 and 9. What follows is a reference implementation — the same structure and the same guards, with the types generalized.
+
+**Two layers.** The factory runs once per store at module load; the hook it returns runs per mount.
+
+```ts
+export const createFormStoreSync = <TDto extends FormDto>(
+  store: PersistedStore<TDto>,
+) => {
+  // Read at factory time, not at cleanup time. Reading it later risks
+  // seeing a noop another consumer swapped in, stranding the store.  [8]
+  const originalStorage = store.persist.getOptions().storage
+  let mountCount = 0
+
+  // Dev-only. The NODE_ENV comparison is a build-time constant, so the
+  // whole branch — effect, counter, message — leaves the prod bundle.  [8]
+  const useAssertSingleConsumer =
+    process.env.NODE_ENV === 'production'
+      ? () => {}
+      : () => {
+          useEffect(() => {
+            mountCount += 1
+            if (mountCount > 1) {
+              console.error(
+                'Two mounted consumers will fight over form.reset and corrupt each other. '
+                + 'Mount this once per store, or share the form through context.',
+              )
+            }
+            return () => { mountCount -= 1 }
+          }, [])
+        }
+
+  return function useFormStoreSync(
+    form: FormApi<TDto['fields']>,
+    { skipPersist = false } = {},
+  ) {
+    useAssertSingleConsumer()
+
+    // Suppress persistence without touching the runtime sync. Swaps the
+    // middleware's storage for a noop; edges 1 and 2 keep working.  [7]
+    useEffect(() => {
+      if (!skipPersist) return
+      store.persist.setOptions({ storage: noopStorage })
+      return () => { store.persist.setOptions({ storage: originalStorage }) }
+    }, [skipPersist])
+
+    // The only path by which storage pushes upstream. Middleware hydrates
+    // once at creation and ignores the cross-document storage event.  [4]
+    useEffect(() => {
+      if (skipPersist) return
+      const pull = async () => {
+        await store.persist.rehydrate()
+        // keepErrors as well: the user is returning to this tab and may
+        // have validation messages on screen worth preserving.  [3]
+        form.reset(store.getState().fields, { keepDirty: true, keepErrors: true })
+      }
+      const onVisible = () => {
+        if (document.visibilityState === 'visible') pull()
+      }
+      window.addEventListener('focus', pull)
+      document.addEventListener('visibilitychange', onVisible)
+      return () => {
+        window.removeEventListener('focus', pull)
+        document.removeEventListener('visibilitychange', onVisible)
+      }
+    }, [form, skipPersist])
+
+    // Edge 1. The guard reads the store fresh rather than closing over
+    // it, so it can never compare against a stale snapshot.  [1] [9]
+    useEffect(() => {
+      return form.subscribe({ values: true }, (values) => {
+        if (deepEqual(values, store.getState().fields)) return
+        store.setState(prev => ({ ...prev, fields: values }))
+      })
+    }, [form])
+
+    // Edge 2, and the symmetric guard.
+    useEffect(() => {
+      const push = (fields: TDto['fields']) => {
+        if (deepEqual(form.getValues(), fields)) return
+        // reset as transport, not as reset: keepDirty or the unsaved
+        // warning is cleared on every store push.  [3]
+        form.reset(fields, { keepDirty: true })
+      }
+      // subscribe is change-only, and the store was already correct
+      // before React rendered — so pull once, by hand.  [2]
+      push(store.getState().fields)
+      return store.subscribe(state => push(state.fields))
+    }, [form])
+  }
+}
+```
+
+**The two guards are the whole cycle-breaking strategy.** Value equality, not provenance — neither side remembers whose write it was; each refuses to act when there is nothing to do. One bounce, both directions.
+
+**What this hook does not solve.** Difficulty 5 needs a one-shot ref in the initializer; 6 needs a flag around programmatic resets, and ideally a branded reset type so a raw one is a compile error. Both live outside this file.
 
 ---
 
