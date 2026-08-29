@@ -4,6 +4,9 @@
  *   createUsePersistFormStoreSync  — edges ① ② ③ ④, difficulty-8 guard
  *   createUseInitPersistForm       — one-shot initializer, difficulties 5 and 6
  *
+ * `stampLastEditedAt` records when the user last edited, for display; it is not
+ * how drafts are detected.
+ *
  * Deps: react, react-hook-form ≥ 7.55, zustand ≥ 4 (persist), react-fast-compare.
  */
 import { useEffect, useRef } from 'react'

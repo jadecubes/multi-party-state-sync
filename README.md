@@ -1,6 +1,6 @@
 # Eight Questions About Form State
 
-Eight requirements from an admin console of twenty long forms. One statement and one diagram each.
+Eight requirements from an admin console of twenty long forms, and the three parties they end up needing — form library, store, persistent storage. One statement and one diagram each.
 
 Where all eight land:
 
@@ -407,7 +407,7 @@ The production version selects this or a no-op by `NODE_ENV` at module load; the
 ### Difficulties 5 and 6 — the initializer's, not the sync's
 
 - **5 · Remote data arrives more than once.** The init hook applies the first non-`undefined` server DTO and then ignores every later reference — a `useRef` flag. Without it, SWR's `revalidateOnFocus` returns a fresh object, `setState(dto, true)` replaces the whole store, and in-flight edits are gone.
-- **6 · Programmatic writes look like user writes.** ① cannot tell a keystroke from a direct `form.reset(data)`: both change the values, both pass the guard, both stamp `state.lastEditedAt` — which is what draft detection reads. So programmatic writes go store-first: ② delivers them, ① sees equal values and stays silent. A branded reset type makes the raw one a compile error.
+- **6 · Programmatic writes look like user writes.** "Has a draft" means the store differs from its defaults, and ① cannot tell a keystroke from a direct `form.reset(data)` — both change the values, both pass the guard, both write the store. So programmatic writes go store-first: ② delivers them, ① sees equal values and stays silent, and a branded reset type makes the raw one a compile error. The create page adds one check on mount — is what persisted a leftover from an edit session? — and discards it if so.
 
 ---
 
