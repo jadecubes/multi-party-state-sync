@@ -276,17 +276,17 @@ A single hook closes difficulties 1, 2, 3, 4 and 9, turns 8 into a dev-time erro
 
 ### The shape
 
-Two layers: the factory runs once per store at module load; the hook it returns runs per mount. The hook *is* the diagram — four effects, one per arrow, each named after its edge. Read this skeleton first; everything after it is the body of one of these four functions, declared inside `useFormStoreSync` so they close over `form`, `store` and `skipPersist`.
+Two layers: the factory runs once per store at module load; the hook it returns runs per mount. The hook *is* the diagram — four effects, one per arrow, named after their edges. The rest of this section is the body of each one, declared inside the hook so it closes over `form`, `store` and `skipPersist`.
 
 ```ts
-export const createFormStoreSync = (store: PersistedStore<FormDto>) => {
+export const createFormStoreSync = (store: PersistedStore) => {
   const originalStorage = store.persist.getOptions().storage   // read once, here — see ③
   let mountCount = 0                                            // see difficulty 8
 
   return function useFormStoreSync(form: FormApi, { skipPersist = false } = {}) {
     useEffect(syncFormToStore,  [form])               // ① F → S
     useEffect(syncStoreToForm,  [form])               // ② S → F
-    useEffect(togglePersist,    [skipPersist])        // ③ S → P  (on/off only — the middleware does the writing)
+    useEffect(togglePersist,    [skipPersist])        // ③ S → P   on/off only; the middleware writes
     useEffect(rehydrateOnFocus, [form, skipPersist])  // ④ P → S
   }
 }
@@ -303,8 +303,12 @@ type FormApi = {                                      // the three React Hook Fo
   subscribe(options: { formState: { values: true }; callback: (state: { values: FormDto['fields'] }) => void }): () => void
 }
 
-type PersistedStore<T> = StoreApi<T> & {              // zustand + persist middleware
-  persist: { rehydrate(): Promise<void>; getOptions(): { storage }; setOptions(options: { storage }): void }
+type PersistedStore = StoreApi<FormDto> & {           // zustand's StoreApi + what the persist middleware adds
+  persist: {
+    rehydrate(): Promise<void>
+    getOptions(): { storage: Storage }
+    setOptions(options: { storage: Storage }): void
+  }
 }
 
 declare const deepEqual: (a: unknown, b: unknown) => boolean   // structural — difficulty 9 is about `===`
@@ -358,6 +362,8 @@ function togglePersist() {
 
 `originalStorage` is captured at factory time, not read back at cleanup. Read at cleanup, it could be the noop another consumer swapped in, and the store would be stranded on noop storage — another consequence of difficulty 8.
 
+The flag also carries an ordering contract: this hook must be called before the initializer in the same component, or the initializer's `setState(serverData)` runs while real storage is still attached and writes the record through.
+
 ### ④ `rehydrateOnFocus` — the only upstream path from storage
 
 ```ts
@@ -383,7 +389,7 @@ The `reset` after `rehydrate()` is mostly a second pass: `rehydrate()` fires the
 
 ### Difficulty 8 — a dev-time guard, not a fix
 
-The store is a module singleton, so two mounted consumers would both call `form.reset` on it. The hook can't prevent that; it can make it loud:
+The store is a module singleton, so two mounted consumers would both call `form.reset` on it. The hook can't prevent that; it can make it loud — a fifth effect, dev builds only:
 
 ```ts
 function assertSingleConsumer() {
@@ -394,16 +400,14 @@ function assertSingleConsumer() {
   }
   return () => { mountCount -= 1 }
 }
-// inside useFormStoreSync, dev builds only:
-if (process.env.NODE_ENV !== 'production') useEffect(assertSingleConsumer, [])
 ```
 
-The `NODE_ENV` comparison is a build-time constant, so the whole branch leaves the prod bundle. (The conditional hook call is safe only because the condition never changes at runtime.)
+The production version selects this or a no-op by `NODE_ENV` at module load; the comparison is a build-time constant, so the whole thing leaves the prod bundle.
 
 ### Difficulties 5 and 6 — the initializer's, not the sync's
 
 - **5 · Remote data arrives more than once.** The init hook applies the first non-`undefined` server DTO and then ignores every later reference — a `useRef` flag. Without it, SWR's `revalidateOnFocus` returns a fresh object, `setState(dto, true)` replaces the whole store, and in-flight edits are gone.
-- **6 · Programmatic writes look like user writes.** ① cannot tell a keystroke from a `form.reset(data)` called directly on the form: both change the values, both pass the guard, both stamp `state.lastEditedAt` — and draft detection reads that stamp. So programmatic writes must never reach the form first. A guarded reset writes the store, lets ② deliver it, and ① sees equal values and stays silent; a branded type on that reset makes passing the raw one a compile error.
+- **6 · Programmatic writes look like user writes.** ① cannot tell a keystroke from a direct `form.reset(data)`: both change the values, both pass the guard, both stamp `state.lastEditedAt` — which is what draft detection reads. So programmatic writes go store-first: ② delivers them, ① sees equal values and stays silent. A branded reset type makes the raw one a compile error.
 
 ---
 
