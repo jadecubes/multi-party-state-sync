@@ -163,6 +163,8 @@ export const createUsePersistFormStoreSync = <TFormDTO extends FormDTO>(
 
 /**
  * Decides what the store holds on mount: remote `formDto`, persisted draft, or default.
+ * One record per mount: if a route change reuses the page for another record, the
+ * page keeps the first one. Key the page by record id so each record mounts fresh.
  * Never touches RHF — `syncStoreToForm`'s mount pull delivers whatever is written here.
  */
 export const createUseInitPersistForm = <TFormDTO extends FormDTO>(

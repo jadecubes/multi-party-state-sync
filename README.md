@@ -272,22 +272,22 @@ None of these throw. Every one of them ships.
 
 ## The tool
 
-A single hook closes difficulties 1, 2, 3, 4 and 9, turns 8 into a dev-time error, and offers an opt-in flag for 7 — hold that one lightly; the last section is about how that flag went. Below is the hook with types simplified. The production version, including the initializer that handles 5 and 6, is [`reference/create-form-store-helper.ts`](reference/create-form-store-helper.ts).
+A single hook closes difficulties 1, 2, 4 and 9, half-closes 3 (a dialog's edit still needs question 8's second signal), turns 8 into a dev-time error, and offers an opt-in flag for 7 — hold that one lightly; the last section is about how that flag went. Below is the hook with types simplified. The production version, including the initializer that handles 5 and 6, is [`reference/create-form-store-helper.ts`](reference/create-form-store-helper.ts).
 
 ### The shape
 
-Two layers: the factory runs once per store at module load; the hook it returns runs per mount. The hook *is* the diagram — four effects, one per arrow, named after their edges. The rest of this section is the body of each one, declared inside the hook so it closes over `form`, `store` and `skipPersist`.
+Two layers: the factory runs once per store at module load; the hook it returns runs per mount. The hook *is* the diagram — four effects, one per arrow, listed in the order the production file runs them. The rest of this section is the body of each one, declared inside the hook so it closes over `form`, `store` and `skipPersist`.
 
 ```ts
 export const createFormStoreSync = (store: PersistedStore) => {
   const originalStorage = store.persist.getOptions().storage   // read once, here — see ③
-  let mountCount = 0                                            // see difficulty 8
+  let activeMountCount = 0                                      // see difficulty 8
 
   return function useFormStoreSync(form: FormApi, { skipPersist = false } = {}) {
-    useEffect(syncFormToStore,  [form])               // ① F → S
-    useEffect(syncStoreToForm,  [form])               // ② S → F
-    useEffect(togglePersist,    [skipPersist])        // ③ S → P   on/off only; the middleware writes
-    useEffect(rehydrateOnFocus, [form, skipPersist])  // ④ P → S
+    useEffect(suppressPersistStorage, [skipPersist])        // ③ S → P   on/off only; the middleware writes
+    useEffect(rehydrateOnTabFocus,    [form, skipPersist])  // ④ P → S
+    useEffect(syncFormToStore,        [form])               // ① F → S
+    useEffect(syncStoreToForm,        [form])               // ② S → F
   }
 }
 ```
@@ -335,7 +335,7 @@ function syncFormToStore() {
 
 ```ts
 function syncStoreToForm() {
-  const push = (fields: FormDto['fields']) => {
+  const saveToForm = (fields: FormDto['fields']) => {
     if (deepEqual(form.getValues(), fields)) return    // the other half of the loop guard
     // Difficulty 3: reset is transport here, not reset. Without keepDirty every
     // store push clears isDirty and disarms the unsaved-changes warning.
@@ -343,17 +343,17 @@ function syncStoreToForm() {
   }
   // Difficulty 2: subscribe is change-only, and the draft was already in the store
   // before React rendered — no change will ever fire for it. Pull once, by hand.
-  push(store.getState().fields)
-  return store.subscribe(state => push(state.fields))
+  saveToForm(store.getState().fields)
+  return store.subscribe(state => saveToForm(state.fields))
 }
 ```
 
 The two guards are symmetric and compare **values, not provenance**. Neither side remembers whose write it was; each refuses to act when there is nothing to do, which ends the cycle after one bounce in either direction.
 
-### ③ `togglePersist` — the opt-in flag for difficulty 7
+### ③ `suppressPersistStorage` — the opt-in flag for difficulty 7
 
 ```ts
-function togglePersist() {
+function suppressPersistStorage() {
   if (!skipPersist) return
   store.persist.setOptions({ storage: noopStorage })   // ① and ② keep running; nothing reaches storage
   return () => store.persist.setOptions({ storage: originalStorage })
@@ -364,10 +364,10 @@ function togglePersist() {
 
 The flag also carries an ordering contract: this hook must be called before the initializer in the same component, or the initializer's `setState(serverData)` runs while real storage is still attached and writes the record through.
 
-### ④ `rehydrateOnFocus` — the only upstream path from storage
+### ④ `rehydrateOnTabFocus` — the only upstream path from storage
 
 ```ts
-function rehydrateOnFocus() {
+function rehydrateOnTabFocus() {
   if (skipPersist) return
   const pull = async () => {
     // Difficulty 4: the middleware hydrates once at creation and never listens to the
@@ -385,7 +385,7 @@ function rehydrateOnFocus() {
 }
 ```
 
-The `reset` after `rehydrate()` is mostly a second pass: `rehydrate()` fires the store subscription from ② synchronously, so ②'s `reset` has already run — without `keepErrors`. Move `keepErrors` into ②'s `push` and this line can go.
+The `reset` after `rehydrate()` is mostly a second pass: `rehydrate()` fires the store subscription from ② synchronously, so ②'s `reset` has already run — without `keepErrors`. Move `keepErrors` into ②'s `saveToForm` and this line can go.
 
 ### Difficulty 8 — a dev-time guard, not a fix
 
@@ -393,12 +393,12 @@ The store is a module singleton, so two mounted consumers would both call `form.
 
 ```ts
 function assertSingleConsumer() {
-  mountCount += 1
-  if (mountCount > 1) {
+  activeMountCount += 1
+  if (activeMountCount > 1) {
     console.error('Two mounted consumers will fight over form.reset and corrupt each other. '
       + 'Mount this once per store, or share the form through context.')
   }
-  return () => { mountCount -= 1 }
+  return () => { activeMountCount -= 1 }
 }
 ```
 
@@ -406,7 +406,7 @@ The production version selects this or a no-op by `NODE_ENV` at module load; the
 
 ### Difficulties 5 and 6 — the initializer's, not the sync's
 
-- **5 · Remote data arrives more than once.** The init hook applies the first non-`undefined` server DTO and then ignores every later reference — a `useRef` flag. Without it, SWR's `revalidateOnFocus` returns a fresh object, `setState(dto, true)` replaces the whole store, and in-flight edits are gone.
+- **5 · Remote data arrives more than once.** The init hook applies the first non-`undefined` server DTO and then ignores every later reference — a `useRef` flag. Without it, SWR's `revalidateOnFocus` returns a fresh object, `setState(dto, true)` replaces the whole store, and in-flight edits are gone. The flag is per mount, not per record: if a route change reuses the page for another record, the page keeps showing the first one, so key the page by the record's id.
 - **6 · Programmatic writes look like user writes.** "Has a draft" means the store differs from its defaults, and ① cannot tell a keystroke from a direct `form.reset(data)` — both change the values, both pass the guard, both write the store. So programmatic writes go store-first: ② delivers them, ① sees equal values and stays silent, and a branded reset type makes the raw one a compile error. The create page adds one check on mount — is what persisted a leftover from an edit session? — and discards it if so.
 
 ---
@@ -417,7 +417,7 @@ Difficulty 7, in the field. Twenty forms used this hook. Twelve persisted to `se
 
 **Five of the eight passed it. Three did not** — same route shape, same key, same factory. It compiled, because the option is optional. It passed review, because a missing argument is invisible. It worked in every single-tab test, because the init hook overwrites the store with the server's record on every edit-page mount — the bug needs two tabs on two records, and the second tab regaining focus.
 
-The flag also has a price nobody wrote down: a form that passes it has no draft. Question 1 is answered for twelve forms and forfeited for eight.
+The flag also has a price nobody wrote down: a form that passes it has no draft. Question 1 is answered for twelve forms and forfeited for the five that pass it; the other three keep their drafts, and the bug.
 
 > A correctness property that depends on every call site opting in will be violated in proportion to the number of call sites.
 
