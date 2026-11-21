@@ -23,7 +23,7 @@ flowchart LR
     linkStyle 0,5 stroke:#888,stroke-dasharray:4 4,color:#888
 ```
 
-**Thick** arrows are the three effects the hook implements — `syncFormToStore` (①), `syncStoreToForm` (②), and `rehydrateOnTabFocus` (④), named as in [`reference/create-form-store-helper.ts`](reference/create-form-store-helper.ts). **Dotted** ③ is the persist middleware, which the hook only switches on and off; it hydrates the store once at creation and never again, which is the whole reason ④ has to exist. **Grey** ⓪ (anything that calls `setState`) and ⑤ (an ordinary selector subscription) need no synchronizing at all.
+**Thick** arrows are the hook's own sync effects — `syncFormToStore` (①), `syncStoreToForm` (②), and `rehydrateOnTabFocus` (④), named as in [`reference/create-form-store-helper.ts`](reference/create-form-store-helper.ts). **Dotted** ③ is the persist middleware; the hook's fourth effect only switches it on and off, and the middleware hydrates the store once at creation and never again — which is the whole reason ④ has to exist. **Grey** ⓪ (anything that calls `setState`) and ⑤ (an ordinary selector subscription) need no synchronizing at all.
 
 ---
 
