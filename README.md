@@ -23,33 +23,13 @@ flowchart LR
     style S fill:#2d6a4f,color:#fff
 ```
 
-⓪ direct write · ① values change · ② `reset(fields)` · ③ automatic persist · ④ `rehydrate()` on focus · ⑤ selector subscription. The dotted arrow is the middleware hydrating once at store creation — automatic, and never again.
+⓪ direct write · ① `syncFormToStore` · ② `syncStoreToForm` · ③ persist middleware · ④ `rehydrateOnTabFocus` · ⑤ selector subscription — ①②③④ are the edges the hook owns, named as in [`reference/create-form-store-helper.ts`](reference/create-form-store-helper.ts). The dotted arrow is the middleware hydrating once at store creation — automatic, and never again.
 
 ---
 
 ## How does a user get their half-finished form back two days later?
 
-Every keystroke writes to the store, and the persistence middleware writes after every store mutation. Two days later the store hydrates **before React renders** — so the form has to pull from it once at mount, because change-only subscriptions will never fire for a value that was already there.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor U as User
-    participant F as Form
-    participant S as Store
-    participant P as Storage
-
-    U->>F: types
-    F->>S: ①
-    S->>P: ③ automatic
-    U->>U: closes the tab
-
-    Note over P,S: two days later
-    P->>S: hydrates once at store creation (automatic)
-    Note over F: form starts on empty defaults
-    S->>F: ② manual pull at mount
-    F-->>U: fields restored
-```
+Every keystroke writes to the store (①), and the persistence middleware writes after every store mutation (③). Two days later the store hydrates **before React renders** — so the form has to pull from it once at mount (②), because change-only subscriptions will never fire for a value that was already there.
 
 > Delete that one-line pull and the form shows empty defaults over a perfectly good draft. It looks redundant in review.
 
@@ -57,23 +37,7 @@ sequenceDiagram
 
 ## How does a dialog at the app root write into a field it can't reach?
 
-It doesn't reach the field. It writes the store, and the store→form edge delivers it.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor U as User
-    participant D as Dialog
-    participant S as Store
-    participant F as Form
-
-    U->>D: picks a value, confirms
-    D->>S: ⓪ direct write
-    S->>F: ②
-    F-->>U: field updates
-    F->>S: ① echo
-    Note over S: equality guard → stop
-```
+It doesn't reach the field. It writes the store (⓪), and the store→form edge (②) delivers it. The form's echo back to the store (①) meets the equality guard — values are equal, so it stops after one bounce.
 
 ---
 
@@ -108,18 +72,7 @@ store.setState(prev => ({
 }))
 ```
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant V as service
-    participant S as Store
-    participant F as Form
-    participant N as Name display
-
-    V->>S: ⓪ one setState, four keys
-    S->>F: ② both ids together
-    S->>N: ⑤ both snapshots together
-```
+One write (⓪) carries both ids to the form (②) and both snapshots to the screen (⑤) in the same render.
 
 > Four separate writes are four separate renders — the old child's name beside the new parent's id.
 
@@ -150,22 +103,7 @@ Keep the server's answer in the `state` half, where the user's toggle cannot rea
 useFormStoreSelector(s => s.state.initialStatus === STATUS.ACTIVE)
 ```
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant API as Server
-    participant S as Store
-    actor U as User
-    participant L as Lock logic
-
-    API->>S: ⓪ state.initialStatus = ACTIVE
-    S->>L: ⑤
-    L-->>U: fields locked
-    U->>S: toggles state.status → disabled
-    Note over S: initialStatus untouched
-    S->>L: ⑤
-    L-->>U: still locked
-```
+The lock reads `initialStatus` through a selector (⑤). The user's toggle moves `status`, never `initialStatus`, so the next ⑤ read is unchanged and the fields stay locked.
 
 ---
 
@@ -230,21 +168,7 @@ flowchart TB
 
 ## The four edges one hook owns
 
-⓪ is whatever calls `setState`, and ⑤ is ordinary selector subscription — neither needs synchronizing. Of the other four, ③ is middleware configuration; the hook only switches it on and off. The remaining three are the hook, and in code they carry names:
-
-```mermaid
-flowchart TB
-    F["<b>React Hook Form</b><br/>user input · validation · isDirty"]
-    S["<b>zustand store</b><br/><i>source of truth</i>"]
-    P["<b>localStorage</b>"]
-
-    F -- "syncFormToStore" --> S
-    S -- "syncStoreToForm" --> F
-    S -- "persist middleware" --> P
-    P -- "rehydrate&#40;&#41;" --> S
-
-    style S fill:#2d6a4f,color:#fff
-```
+⓪ is whatever calls `setState`, and ⑤ is ordinary selector subscription — neither needs synchronizing. Of the other four (the labelled edges on the first diagram), ③ is middleware configuration; the hook only switches it on and off. The remaining three — `syncFormToStore` (①), `syncStoreToForm` (②), `rehydrateOnTabFocus` (④) — are the hook.
 
 Both vertical pairs are asymmetric in the same way: the downward edge is automatic, the upward edge has to be asked for. `syncFormToStore` fires on every keystroke; `syncStoreToForm` needs an explicit pull at mount. The middleware persists on every write; `rehydrate()` happens only when someone calls it.
 
