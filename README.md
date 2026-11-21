@@ -25,6 +25,15 @@ flowchart LR
 
 ⓪ direct write · ① `syncFormToStore` · ② `syncStoreToForm` · ③ persist middleware · ④ `rehydrateOnTabFocus` · ⑤ selector subscription — ①②③④ are the edges the hook owns, named as in [`reference/create-form-store-helper.ts`](reference/create-form-store-helper.ts). The dotted arrow is the middleware hydrating once at store creation — automatic, and never again.
 
+## Tables in this README
+
+| Table | What it shows |
+|---|---|
+| [What the eight answers add up to](#what-the-eight-answers-add-up-to) | For each of the eight questions, which of the edges ⓪–⑤ its answer uses |
+| [Alice's empty form](#alices-empty-form) | Question 1 from the user's side: what Alice saw, what she sees now, why it happened and the fix |
+| [Nine difficulties](#nine-difficulties) | The nine ways the sync goes wrong without an error, and what each looks like |
+| [Files](#files) | What each file in the repo does |
+
 ---
 
 ## How does a user get their half-finished form back two days later?
@@ -171,6 +180,18 @@ flowchart TB
 ⓪ is whatever calls `setState`, and ⑤ is ordinary selector subscription — neither needs synchronizing. Of the other four (the labelled edges on the first diagram), ③ is middleware configuration; the hook only switches it on and off. The remaining three — `syncFormToStore` (①), `syncStoreToForm` (②), `rehydrateOnTabFocus` (④) — are the hook.
 
 Both vertical pairs are asymmetric in the same way: the downward edge is automatic, the upward edge has to be asked for. `syncFormToStore` fires on every keystroke; `syncStoreToForm` needs an explicit pull at mount. The middleware persists on every write; `rehydrate()` happens only when someone calls it.
+
+---
+
+## Alice's empty form
+
+This is [question 1](#how-does-a-user-get-their-half-finished-form-back-two-days-later) seen from the user's side. Alice writes campaigns in an admin console. The last column is for developers. [`reference/alice-empty-form.tsx`](reference/alice-empty-form.tsx) shows the story in code.
+
+| Story | Before | After | Why it happened, and the fix |
+|---|---|---|---|
+| **The empty form** ([difficulty 2](#nine-difficulties)) | Alice has spent twenty minutes on a new campaign. She refreshes the page, and every field is blank. She has to type it all again. | Alice refreshes, and everything she typed is still there. | 1. Each keystroke is copied to the store, and the store is saved in the browser.<br>2. On refresh, the store reloads the draft before the form appears.<br>3. The form starts empty and copies from the store only when the store changes. It doesn't change, so the form stays empty.<br>**Fix:** when the form appears, `syncStoreToForm` copies the store into it once, then waits for changes. |
+
+**Why a module.** Every form that keeps a draft needs that one-time copy, and it looks redundant in review, so it lives once in [`reference/create-form-store-helper.ts`](reference/create-form-store-helper.ts) instead of in each form.
 
 ---
 
@@ -346,3 +367,14 @@ The flag also has a price nobody wrote down: a form that passes it has no draft.
 > A correctness property that depends on every call site opting in will be violated in proportion to the number of call sites.
 
 Make the suppression structural — decided by the factory, not the page — and the flag, its ordering contract, and all three bugs stop existing at once.
+
+---
+
+## Files
+
+| File | What it does |
+|---|---|
+| `README.md` | The tutorial: eight questions about form state, the four edges one hook owns, Alice's empty form, nine difficulties, the tool, and what it cost |
+| [`reference/create-form-store-helper.ts`](reference/create-form-store-helper.ts) | The module: `createUsePersistFormStoreSync` returns the hook that keeps the form, the store and storage in sync; `createUseInitPersistForm` returns a hook that decides once what the store starts with (the server's record, a saved draft, or the defaults) |
+| [`reference/alice-empty-form.tsx`](reference/alice-empty-form.tsx) | The story in [Alice's empty form](#alices-empty-form) as code: the hand-written version and its fix |
+| `LICENSE` | The license |
