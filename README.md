@@ -1,29 +1,24 @@
 # Keeping a Form, a Store, and Storage in Sync
 
-An admin console with twenty long forms needs three parties kept in sync: the **form library** (user input, validation, `isDirty`), a **store** (the fields, plus everything the form has no room for), and **persistent storage** (drafts that survive a refresh or a second tab). The sync between them is four arrows — ①–④ in the diagram below.
+A long form whose unsaved draft must survive a refresh or a second tab needs three parties kept in sync: the **form library** (user input, validation, `isDirty`), a **store** (the fields, plus everything the form has no room for), and **persistent storage** (where that draft lives). The sync between them is four arrows — ①–④ in the diagram below.
 
 This document is the nine ways they break first, then the one hook that closes them, and last why the architecture needs these three parties at all.
 
 ```mermaid
 flowchart LR
-    D["Dialogs · services<br/>(outside the form tree)"]
     F["Form library<br/>validation · isDirty"]
     S["<b>Store</b><br/>fields + state"]
     P["Persistent<br/>storage"]
-    U["Components"]
 
-    D -- "⓪ setState" --> S
     F == "① syncFormToStore" ==> S
     S == "② syncStoreToForm" ==> F
     S -. "③ persist" .-> P
     P == "④ rehydrateOnTabFocus" ==> S
-    S -- "⑤ subscribe" --> U
 
     style S fill:#2d6a4f,color:#fff
-    linkStyle 0,5 stroke:#888,stroke-dasharray:4 4,color:#888
 ```
 
-**Thick** arrows are the hook's own sync effects — `syncFormToStore` (①), `syncStoreToForm` (②), and `rehydrateOnTabFocus` (④), named as in [`reference/create-form-store-helper.ts`](reference/create-form-store-helper.ts). **Dotted** ③ is the persist middleware; the hook's fourth effect only switches it on and off, and the middleware hydrates the store once at creation and never again — which is the whole reason ④ has to exist. **Grey** ⓪ (anything that calls `setState`) and ⑤ (an ordinary selector subscription) need no synchronizing at all.
+**Thick** arrows are the hook's own sync effects — `syncFormToStore` (①), `syncStoreToForm` (②), and `rehydrateOnTabFocus` (④), named as in [`reference/create-form-store-helper.ts`](reference/create-form-store-helper.ts). **Dotted** ③ is the persist middleware; the hook's fourth effect only switches it on and off, and the middleware hydrates the store once at creation and never again — which is the whole reason ④ has to exist. Two other touchpoints are left off the map because they need no synchronizing: ⓪, anything that calls `setState`, and ⑤, an ordinary selector subscription.
 
 ---
 
