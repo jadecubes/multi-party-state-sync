@@ -199,22 +199,20 @@ Make the suppression structural — decided by the factory, not the page — and
 
 ## Why three parties
 
-You could try to keep all of this in the form library alone. These are the requirements that force a store on top of it, and then persistence on top of that. The matrix shows which edges each requirement needs.
+You could keep all of this in the form library alone — until eight requirements force a store on top of it, and then persistence on top of that:
 
-| Requirement | ⓪ | ① | ② | ③ | ④ | ⑤ |
-|---|---|---|---|---|---|---|
-| 1 · Draft survives two days away | | ● | ● | ● | | |
-| 2 · A dialog outside the form writes a field | ● | ● | ● | | | |
-| 3 · Show the name of an item that no longer exists | ● | | ● | | | ● |
-| 4 · Four dependent values change in one tick | ● | | ● | | | ● |
-| 5 · One section re-renders, not the other seven | | ● | | | | ● |
-| 6 · Lock fields on the server's original answer | ● | | | | | ● |
-| 7 · A second tab edits the same record | | | ● | ● | ● | |
-| 8 · The unsaved-changes warning survives a dialog edit | ● | ● | ● | | | |
+1. A draft survives two days away.
+2. A dialog outside the form writes a field.
+3. The form shows the name of an item that no longer exists.
+4. Four dependent values change in one tick.
+5. One section re-renders, not the other seven.
+6. Fields stay locked to the server's original answer.
+7. A second tab edits the same record.
+8. The unsaved-changes warning survives a dialog edit.
 
-**Only requirements 1 and 7 need persistence.** The other six are met by the form and the store alone — persistence is the smaller part of the job.
+**Only two of them — 1 and 7 — need persistence.** The other six are met by the form and the store alone; persistence is the smaller part of the job.
 
-**Edge ⑤ (the store read by components) meets four of them — more than persistence does.** The store's job is less "mirror the form" than "hold what the form has no room for": snapshots that outlive their option list (3, 4), the server's original answer (6), per-value subscriptions (5).
+**The store earns its place through what components read from it, not through persistence.** That read serves four of the eight requirements — more than storage does: snapshots that outlive their option list (3, 4), the server's original answer (6), per-value subscriptions (5). The store's job is less "mirror the form" than "hold what the form has no room for".
 
 ### The store's second half
 
