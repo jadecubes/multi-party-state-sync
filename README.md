@@ -1,8 +1,8 @@
 # Keeping a Form, a Store, and Storage in Sync
 
-An admin console with twenty long forms needs three parties kept in sync: the **form library** (user input, validation, `isDirty`), a **store** (the fields, plus everything the form has no room for), and **persistent storage** (drafts that survive a refresh or a second tab). The sync between them is four arrows — and each arrow has a way of going wrong that throws no error.
+An admin console with twenty long forms needs three parties kept in sync: the **form library** (user input, validation, `isDirty`), a **store** (the fields, plus everything the form has no room for), and **persistent storage** (drafts that survive a refresh or a second tab). The sync between them is four arrows — ①–④ in the diagram below.
 
-This document is those nine failures first, then the one hook that closes them, and last why the architecture needs these three parties at all.
+This document is the nine ways they break first, then the one hook that closes them, and last why the architecture needs these three parties at all.
 
 ```mermaid
 flowchart LR
@@ -25,7 +25,7 @@ flowchart LR
 
 ⓪ direct write · ① `syncFormToStore` · ② `syncStoreToForm` · ③ persist middleware · ④ `rehydrateOnTabFocus` · ⑤ selector subscription. The dotted arrow is the middleware hydrating once at store creation — automatic, and never again.
 
-⓪ (whatever calls `setState`) and ⑤ (ordinary selector subscription) need no synchronizing, and ③ is middleware the hook only switches on and off. The three the hook actually owns — `syncFormToStore` (①), `syncStoreToForm` (②), `rehydrateOnTabFocus` (④) — are named as in [`reference/create-form-store-helper.ts`](reference/create-form-store-helper.ts). Both vertical pairs are asymmetric the same way: the downward edge is automatic (① every keystroke, ③ every write), the upward edge has to be asked for (② an explicit pull at mount, ④ only when something calls it).
+⓪ (whatever calls `setState`) and ⑤ (ordinary selector subscription) need no synchronizing, and ③ is middleware the hook only switches on and off. The three the hook actually owns — `syncFormToStore` (①), `syncStoreToForm` (②), `rehydrateOnTabFocus` (④) — are named as in [`reference/create-form-store-helper.ts`](reference/create-form-store-helper.ts).
 
 ---
 
@@ -55,7 +55,7 @@ A single hook closes difficulties 1, 2, 3, 4 and 9, turns 8 into a dev-time erro
 
 ### The shape
 
-Two layers: the factory runs once per store at module load; the hook it returns runs per mount. The hook *is* the four arrows — four effects, one per arrow, listed in the order the production file runs them. The rest of this section is the body of each one, declared inside the hook so it closes over `form`, `store` and `skipPersist`.
+Two layers: the factory runs once per store at module load; the hook it returns runs per mount. The hook *is* the four arrows — four effects, one per arrow, listed in the order the production file runs them. Both vertical pairs are asymmetric the same way: the downward edge is automatic (① every keystroke, ③ every write), the upward edge has to be asked for (② a pull at mount, ④ only when something calls it). The rest of this section is the body of each one, declared inside the hook so it closes over `form`, `store` and `skipPersist`.
 
 ```ts
 export const createFormStoreSync = (store: PersistedStore) => {
