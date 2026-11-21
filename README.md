@@ -1,8 +1,8 @@
-# Eight Questions About Form State
+# Keeping a Form, a Store, and Storage in Sync
 
-Eight requirements from an admin console of twenty long forms, and the three parties they end up needing — form library, store, persistent storage. One statement and one diagram each.
+An admin console with twenty long forms needs three parties kept in sync: the **form library** (user input, validation, `isDirty`), a **store** (the fields, plus everything the form has no room for), and **persistent storage** (drafts that survive a refresh or a second tab). The sync between them is four arrows — ①–④ in the diagram below.
 
-Where all eight land:
+This document is the nine ways they break first, then the one hook that closes them, and last why the architecture needs these three parties at all.
 
 ```mermaid
 flowchart LR
@@ -23,181 +23,15 @@ flowchart LR
     style S fill:#2d6a4f,color:#fff
 ```
 
-⓪ direct write · ① `syncFormToStore` · ② `syncStoreToForm` · ③ persist middleware · ④ `rehydrateOnTabFocus` · ⑤ selector subscription — ①②③④ are the edges the hook owns, named as in [`reference/create-form-store-helper.ts`](reference/create-form-store-helper.ts). The dotted arrow is the middleware hydrating once at store creation — automatic, and never again.
+⓪ direct write · ① `syncFormToStore` · ② `syncStoreToForm` · ③ persist middleware · ④ `rehydrateOnTabFocus` · ⑤ selector subscription. The dotted arrow is the middleware hydrating once at store creation — automatic, and never again.
 
-## Tables in this README
-
-| Table | What it shows |
-|---|---|
-| [What the eight answers add up to](#what-the-eight-answers-add-up-to) | For each of the eight questions, which of the edges ⓪–⑤ its answer uses |
-| [Alice's empty form](#alices-empty-form) | Question 1 from the user's side: what Alice saw, what she sees now, why it happened and the fix |
-| [Nine difficulties](#nine-difficulties) | The nine ways the sync goes wrong without an error, and what each looks like |
-| [Files](#files) | What each file in the repo does |
+⓪ (whatever calls `setState`) and ⑤ (ordinary selector subscription) need no synchronizing, and ③ is middleware the hook only switches on and off. The three the hook actually owns — `syncFormToStore` (①), `syncStoreToForm` (②), `rehydrateOnTabFocus` (④) — are named as in [`reference/create-form-store-helper.ts`](reference/create-form-store-helper.ts).
 
 ---
 
-## How does a user get their half-finished form back two days later?
+## The nine ways it breaks
 
-Every keystroke writes to the store (①), and the persistence middleware writes after every store mutation (③). Two days later the store hydrates **before React renders** — so the form has to pull from it once at mount (②), because change-only subscriptions will never fire for a value that was already there.
-
-> Delete that one-line pull and the form shows empty defaults over a perfectly good draft. It looks redundant in review.
-
----
-
-## How does a dialog at the app root write into a field it can't reach?
-
-It doesn't reach the field. It writes the store (⓪), and the store→form edge (②) delivers it. The form's echo back to the store (①) meets the equality guard — values are equal, so it stops after one bounce.
-
----
-
-## How do you display the name of an item that no longer exists?
-
-Store the shape the user selected, at selection time, next to the fields. It is not a form field — it is never submitted — so the store keeps a second half for exactly this.
-
-```mermaid
-flowchart LR
-    subgraph DTO["one store, two halves"]
-      A["<b>fields</b><br/>itemId: 4471<br/><i>submitted</i>"]
-      B["<b>state</b><br/>snapshot: name, thumbnail<br/><i>display only</i>"]
-    end
-    A --> F["② → form field"]
-    B --> N["⑤ → name on screen"]
-```
-
-> The option list is fetched fresh. A delisted item is gone from it, and the draft would render a bare id.
-
----
-
-## When a parent changes, how do four dependent values change without a visible intermediate state?
-
-One `setState` writes all four in the same tick — two ids in `fields`, two snapshots in `state`.
-
-```ts
-// next: the newly selected parent
-store.setState(prev => ({
-  ...prev,
-  fields: { ...prev.fields, parentId: next.id, childId: null },
-  state:  { ...prev.state, parentSnapshot: next, childSnapshot: null },
-}))
-```
-
-One write (⓪) carries both ids to the form (②) and both snapshots to the screen (⑤) in the same render.
-
-> Four separate writes are four separate renders — the old child's name beside the new parent's id.
-
----
-
-## How does one section of an eight-section form re-render without the other seven?
-
-Read through a store selector, not the form library's `watch()`.
-
-```mermaid
-flowchart TB
-    T["user types in section A"]
-    T --> W["watch()"] --> WR["A re-renders<br/>B–H re-render too"]
-    T --> SE["store selector"] --> SR["A re-renders<br/><b>B–H untouched</b>"]
-
-    style SR fill:#2d6a4f,color:#fff
-```
-
-> `watch()` re-renders the whole subscribed subtree on any field change. A selector fires only for its own value.
-
----
-
-## How do you lock fields on the server's original answer after the user has already toggled it?
-
-Keep the server's answer in the `state` half, where the user's toggle cannot reach it: `status` moves with the toggle, `initialStatus` never does.
-
-```ts
-useFormStoreSelector(s => s.state.initialStatus === STATUS.ACTIVE)
-```
-
-The lock reads `initialStatus` through a selector (⑤). The user's toggle moves `status`, never `initialStatus`, so the next ⑤ read is unchanged and the fields stay locked.
-
----
-
-## How does a second tab learn that the first tab edited the same record?
-
-It doesn't, until it regains focus and reads storage on purpose. Persistence middleware hydrates once at creation and ignores the browser's `storage` event.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant A as Tab A
-    participant P as localStorage
-    actor U as User
-    participant B as Tab B
-
-    A->>P: ③
-    Note over B: Tab B has no idea
-    U->>B: switches back
-    B->>P: ④ rehydrate() on focus
-    P-->>B: whole store replaced
-    B-->>U: form shows tab A's content
-```
-
-> If the key is one constant and the route is `/record/:id/edit`, this is how one record's content lands in another record's form.
-
----
-
-## Why doesn't the unsaved-changes warning fire when a dialog changed the value?
-
-Because edge ② uses `reset(fields, { keepDirty: true })` as a transport, and `keepDirty` preserves an existing `true` — it never turns `false` into `true`.
-
-```mermaid
-flowchart TB
-    T1["user types"] --> D1["isDirty → true"] --> W1["warns"]
-    T2["dialog writes store"] --> R["② reset with keepDirty"] --> D2["isDirty stays false"] --> W2["<b>no warning</b>"]
-
-    style W2 fill:#9c2e46,color:#fff
-```
-
-> Compensated with a second signal: `isDirty || hasDraft`. In edit mode `hasDraft` is true from page load, so it over-warns. That was accepted as the safer failure.
-
----
-
-## What the eight answers add up to
-
-| Question | ⓪ | ① | ② | ③ | ④ | ⑤ |
-|---|---|---|---|---|---|---|
-| 1 · Draft after two days | | ● | ● | ● | | |
-| 2 · Dialog writes a field | ● | ● | ● | | | |
-| 3 · Name of a deleted item | ● | | ● | | | ● |
-| 4 · Four values, one tick | ● | | ● | | | ● |
-| 5 · One section re-renders | | ● | | | | ● |
-| 6 · Lock on the original answer | ● | | | | | ● |
-| 7 · Two tabs | | | ● | ● | ● | |
-| 8 · Warning misses an edit | ● | ● | ● | | | |
-
-**Only questions 1 and 7 need persistence.** The other six are answered by two parties.
-
-**Edge ⑤ answers four of them — more than persistence does.** The store's job is less "mirror the form" than "hold what the form has no room for": snapshots that outlive their option list, the server's original answer, per-value subscriptions.
-
----
-
-## The four edges one hook owns
-
-⓪ is whatever calls `setState`, and ⑤ is ordinary selector subscription — neither needs synchronizing. Of the other four (the labelled edges on the first diagram), ③ is middleware configuration; the hook only switches it on and off. The remaining three — `syncFormToStore` (①), `syncStoreToForm` (②), `rehydrateOnTabFocus` (④) — are the hook.
-
-Both vertical pairs are asymmetric in the same way: the downward edge is automatic, the upward edge has to be asked for. `syncFormToStore` fires on every keystroke; `syncStoreToForm` needs an explicit pull at mount. The middleware persists on every write; `rehydrate()` happens only when someone calls it.
-
----
-
-## Alice's empty form
-
-This is [question 1](#how-does-a-user-get-their-half-finished-form-back-two-days-later) seen from the user's side. Alice writes campaigns in an admin console. The last column is for developers. [`reference/alice-empty-form.tsx`](reference/alice-empty-form.tsx) shows the story in code.
-
-| Story | Before | After | Why it happened, and the fix |
-|---|---|---|---|
-| **The empty form** ([difficulty 2](#nine-difficulties)) | Alice has spent twenty minutes on a new campaign. She refreshes the page, and every field is blank. She has to type it all again. | Alice refreshes, and everything she typed is still there. | 1. Each keystroke is copied to the store, and the store is saved in the browser.<br>2. On refresh, the store reloads the draft before the form appears.<br>3. The form starts empty and copies from the store only when the store changes. It doesn't change, so the form stays empty.<br>**Fix:** when the form appears, `syncStoreToForm` copies the store into it once, then waits for changes. |
-
-**Why a module.** Every form that keeps a draft needs that one-time copy, and it looks redundant in review, so it lives once in [`reference/create-form-store-helper.ts`](reference/create-form-store-helper.ts) instead of in each form.
-
----
-
-## Nine difficulties
-
-The diagram is four arrows. Implementing those four arrows is not four lines, because each one has a way of going wrong that produces no error.
+Those four arrows are not four lines of code, because each one has a way of going wrong that produces no error.
 
 | # | Difficulty | What it looks like when it bites | How it's resolved |
 |---|---|---|---|
@@ -221,7 +55,7 @@ A single hook closes difficulties 1, 2, 3, 4 and 9, turns 8 into a dev-time erro
 
 ### The shape
 
-Two layers: the factory runs once per store at module load; the hook it returns runs per mount. The hook *is* the diagram — four effects, one per arrow, listed in the order the production file runs them. The rest of this section is the body of each one, declared inside the hook so it closes over `form`, `store` and `skipPersist`.
+Two layers: the factory runs once per store at module load; the hook it returns runs per mount. The hook *is* the four arrows — four effects, one per arrow, listed in the order the production file runs them. Both vertical pairs are asymmetric the same way: the downward edge is automatic (① every keystroke, ③ every write), the upward edge has to be asked for (② a pull at mount, ④ only when something calls it). The rest of this section is the body of each one, declared inside the hook so it closes over `form`, `store` and `skipPersist`.
 
 ```ts
 export const createFormStoreSync = (store: PersistedStore) => {
@@ -240,7 +74,7 @@ export const createFormStoreSync = (store: PersistedStore) => {
 ### What the code assumes
 
 ```ts
-type FormDto = { fields: object; state: object }      // the two halves from question 3
+type FormDto = { fields: object; state: object }      // the two halves — see "Why three parties"
 
 type FormApi = {                                      // the three React Hook Form methods used
   getValues(): FormDto['fields']
@@ -362,7 +196,7 @@ Difficulty 7, in the field. Twenty forms used this hook. Twelve persisted to `se
 
 **Five of the eight passed it. Three did not** — same route shape, same key, same factory. It compiled, because the option is optional. It passed review, because a missing argument is invisible. It worked in every single-tab test, because the init hook overwrites the store with the server's record on every edit-page mount — the bug needs two tabs on two records, and the second tab regaining focus.
 
-The flag also has a price nobody wrote down: a form that passes it has no draft. Question 1 is answered for twelve forms and forfeited for the five that pass it; the other three keep their drafts, and the bug.
+The flag also has a price nobody wrote down: a form that passes it has no draft. The draft-survival requirement is answered for twelve forms and forfeited for the five that pass it; the other three keep their drafts, and the bug.
 
 > A correctness property that depends on every call site opting in will be violated in proportion to the number of call sites.
 
@@ -370,11 +204,73 @@ Make the suppression structural — decided by the factory, not the page — and
 
 ---
 
+## Why three parties
+
+You could try to keep all of this in the form library alone. These are the requirements that force a store on top of it, and then persistence on top of that. The matrix shows which edges each requirement needs.
+
+| Requirement | ⓪ | ① | ② | ③ | ④ | ⑤ |
+|---|---|---|---|---|---|---|
+| 1 · Draft survives two days away | | ● | ● | ● | | |
+| 2 · A dialog outside the form writes a field | ● | ● | ● | | | |
+| 3 · Show the name of an item that no longer exists | ● | | ● | | | ● |
+| 4 · Four dependent values change in one tick | ● | | ● | | | ● |
+| 5 · One section re-renders, not the other seven | | ● | | | | ● |
+| 6 · Lock fields on the server's original answer | ● | | | | | ● |
+| 7 · A second tab edits the same record | | | ● | ● | ● | |
+| 8 · The unsaved-changes warning survives a dialog edit | ● | ● | ● | | | |
+
+**Only requirements 1 and 7 need persistence.** The other six are met by the form and the store alone — persistence is the smaller part of the job.
+
+**Edge ⑤ (the store read by components) meets four of them — more than persistence does.** The store's job is less "mirror the form" than "hold what the form has no room for": snapshots that outlive their option list (3, 4), the server's original answer (6), per-value subscriptions (5).
+
+### The store's second half
+
+Requirements 3, 4 and 6 display or lock on data that is not a form field and is never submitted — a deleted item's name, a parent's snapshot, the server's original status. The store keeps a second half for exactly this: `fields` is submitted, `state` is display and bookkeeping.
+
+```mermaid
+flowchart LR
+    subgraph DTO["one store, two halves"]
+      A["<b>fields</b><br/>itemId: 4471<br/><i>submitted</i>"]
+      B["<b>state</b><br/>snapshot: name, thumbnail<br/><i>display only</i>"]
+    end
+    A --> F["② → form field"]
+    B --> N["⑤ → name on screen"]
+```
+
+When a parent changes, one `setState` writes all four dependent values in the same tick — two ids into `fields`, two snapshots into `state` (⓪) — so the form (②) and the screen (⑤) update together, with no frame showing the old child's name beside the new parent's id.
+
+### Reading one value without re-rendering the rest
+
+Requirement 5: read through a store selector, not the form library's `watch()`.
+
+```mermaid
+flowchart TB
+    T["user types in section A"]
+    T --> W["watch()"] --> WR["A re-renders<br/>B–H re-render too"]
+    T --> SE["store selector"] --> SR["A re-renders<br/><b>B–H untouched</b>"]
+
+    style SR fill:#2d6a4f,color:#fff
+```
+
+`watch()` re-renders the whole subscribed subtree on any field change; a selector fires only for its own value. The same selector path locks requirement 6: it reads `state.initialStatus`, which the user's toggle (moving `state.status`) never touches, so the next read is unchanged and the fields stay locked.
+
+### Alice's empty form
+
+Requirement 1 from the user's side. Alice writes campaigns in an admin console. The last column is for developers. [`reference/alice-empty-form.tsx`](reference/alice-empty-form.tsx) shows the story in code.
+
+| Story | Before | After | Why it happened, and the fix |
+|---|---|---|---|
+| **The empty form** (difficulty 2) | Alice has spent twenty minutes on a new campaign. She refreshes the page, and every field is blank. She has to type it all again. | Alice refreshes, and everything she typed is still there. | 1. Each keystroke is copied to the store, and the store is saved in the browser.<br>2. On refresh, the store reloads the draft before the form appears.<br>3. The form starts empty and copies from the store only when the store changes. It doesn't change, so the form stays empty.<br>**Fix:** when the form appears, `syncStoreToForm` copies the store into it once, then waits for changes. |
+
+**Why a module.** Every form that keeps a draft needs that one-time copy, and it looks redundant in review, so it lives once in [`reference/create-form-store-helper.ts`](reference/create-form-store-helper.ts) instead of in each form.
+
+---
+
 ## Files
 
 | File | What it does |
 |---|---|
-| `README.md` | The tutorial: eight questions about form state, the four edges one hook owns, Alice's empty form, nine difficulties, the tool, and what it cost |
+| `README.md` | This document: the nine ways form/store/storage sync breaks, the one hook that fixes them, what the opt-in flag cost, and why the architecture needs three parties |
 | [`reference/create-form-store-helper.ts`](reference/create-form-store-helper.ts) | The module: `createUsePersistFormStoreSync` returns the hook that keeps the form, the store and storage in sync; `createUseInitPersistForm` returns a hook that decides once what the store starts with (the server's record, a saved draft, or the defaults) |
 | [`reference/alice-empty-form.tsx`](reference/alice-empty-form.tsx) | The story in [Alice's empty form](#alices-empty-form) as code: the hand-written version and its fix |
 | `LICENSE` | The license |
