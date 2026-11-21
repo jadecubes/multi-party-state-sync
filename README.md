@@ -6,26 +6,24 @@ This document is the nine ways they break first, then the one hook that closes t
 
 ```mermaid
 flowchart LR
-    D["Dialogs · services<br/>outside the form tree"]
+    D["Dialogs · services<br/>(outside the form tree)"]
     F["Form library<br/>validation · isDirty"]
     S["<b>Store</b><br/>fields + state"]
-    P["Persistent storage"]
+    P["Persistent<br/>storage"]
     U["Components"]
 
-    D -- "⓪" --> S
-    F -- "①" --> S
-    S -- "②" --> F
-    S -- "③" --> P
-    P -. "automatic" .-> S
-    P -- "④" --> S
-    S -- "⑤" --> U
+    D -- "⓪ setState" --> S
+    F == "① syncFormToStore" ==> S
+    S == "② syncStoreToForm" ==> F
+    S -. "③ persist" .-> P
+    P == "④ rehydrateOnTabFocus" ==> S
+    S -- "⑤ subscribe" --> U
 
     style S fill:#2d6a4f,color:#fff
+    linkStyle 0,5 stroke:#888,stroke-dasharray:4 4,color:#888
 ```
 
-⓪ direct write · ① `syncFormToStore` · ② `syncStoreToForm` · ③ persist middleware · ④ `rehydrateOnTabFocus` · ⑤ selector subscription. The dotted arrow is the middleware hydrating once at store creation — automatic, and never again.
-
-⓪ (whatever calls `setState`) and ⑤ (ordinary selector subscription) need no synchronizing, and ③ is middleware the hook only switches on and off. The three the hook actually owns — `syncFormToStore` (①), `syncStoreToForm` (②), `rehydrateOnTabFocus` (④) — are named as in [`reference/create-form-store-helper.ts`](reference/create-form-store-helper.ts).
+**Thick** arrows are the three effects the hook implements — `syncFormToStore` (①), `syncStoreToForm` (②), and `rehydrateOnTabFocus` (④), named as in [`reference/create-form-store-helper.ts`](reference/create-form-store-helper.ts). **Dotted** ③ is the persist middleware, which the hook only switches on and off; it hydrates the store once at creation and never again, which is the whole reason ④ has to exist. **Grey** ⓪ (anything that calls `setState`) and ⑤ (an ordinary selector subscription) need no synchronizing at all.
 
 ---
 
