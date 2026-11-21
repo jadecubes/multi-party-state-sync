@@ -254,17 +254,17 @@ Both vertical pairs are asymmetric in the same way: the downward edge is automat
 
 The diagram is four arrows. Implementing those four arrows is not four lines, because each one has a way of going wrong that produces no error.
 
-| # | Difficulty | What it looks like when it bites |
-|---|---|---|
-| 1 | Two owners of one value | Infinite loop: form writes store, store writes form, repeat |
-| 2 | `subscribe` is change-only | Empty form over a valid draft — the value was already correct, so no change ever fires |
-| 3 | `reset` is being used as transport | Unsaved-changes warning silently disarmed on every store push |
-| 4 | Storage never announces itself | Second tab stale forever; the browser fires `storage`, the middleware never listens |
-| 5 | Remote data arrives more than once | Focus revalidation replaces the store and destroys in-flight edits |
-| 6 | Programmatic writes look like user writes | A brand-new create page stamps a draft the user never typed |
-| 7 | One key, many records | Record #1's content appears in record #2's form, across tabs |
-| 8 | The store is a module singleton | Two mounted forms fight over `reset`; stale `isDirty` leaks across routes |
-| 9 | Reference equality is not value equality | Object fields with identical content trigger spurious resets |
+| # | Difficulty | What it looks like when it bites | How it's resolved |
+|---|---|---|---|
+| 1 | Two owners of one value | Infinite loop: form writes store, store writes form, repeat | ① ② guard with `deepEqual`, skip unchanged writes — stops after one hop |
+| 2 | `subscribe` is change-only | Empty form over a valid draft — the value was already correct, so no change ever fires | ② pulls once by hand at mount, before subscribing |
+| 3 | `reset` is being used as transport | Unsaved-changes warning silently disarmed on every store push | Every store→form push keeps `keepDirty` |
+| 4 | Storage never announces itself | Second tab stale forever; the browser fires `storage`, the middleware never listens | ④ calls `rehydrate()` on focus — the read the middleware skips |
+| 5 | Remote data arrives more than once | Focus revalidation replaces the store and destroys in-flight edits | Initializer applies the first server DTO only (`useRef` flag) |
+| 6 | Programmatic writes look like user writes | A brand-new create page stamps a draft the user never typed | Writes go store-first (② delivers, ① stays silent); create page discards a stale draft |
+| 7 | One key, many records | Record #1's content appears in record #2's form, across tabs | Opt-in `skipPersist` swaps in noop storage |
+| 8 | The store is a module singleton | Two mounted forms fight over `reset`; stale `isDirty` leaks across routes | Dev-only guard `console.error`s on a second mount, compiled out of prod |
+| 9 | Reference equality is not value equality | Object fields with identical content trigger spurious resets | Guards compare by value (`deepEqual`), not `===` |
 
 None of these throw. Every one of them ships.
 
